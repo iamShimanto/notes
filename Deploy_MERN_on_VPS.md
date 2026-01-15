@@ -48,7 +48,7 @@ Install Git
 
 ###  2. Setting Up the MongoDB Database
 
-If you want to setup MongoDB on VPS Follow this Guide: [click here](https://github.com/iamShimanto/notes/MongoDB_Setup_on_VPS.md)
+If you want to setup MongoDB on VPS Follow this Guide: [click here](https://github.com/iamShimanto/notes/blob/main/MongoDB_Setup_on_VPS.md)
 
 ### 3. Deploying the Express and Node.js Backend
 
