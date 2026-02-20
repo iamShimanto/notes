@@ -1,6 +1,6 @@
-# 🧴 Joud Perfume – Production Deployment Guide
+# Production Deployment Guide
 
-Fullstack MERN-based eCommerce project deployed using Docker, Nginx, and Ubuntu VPS.
+Fullstack MERN-based project deployed using Docker, Nginx, and Ubuntu VPS.
 
 ---
 
