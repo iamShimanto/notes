@@ -1,376 +1,340 @@
-# Production Deployment Guide
+# 🚀 VPS Deployment Guide — Full Stack (Client + Admin + Backend + Redis)
 
-Fullstack MERN-based project deployed using Docker, Nginx, and Ubuntu VPS.
-
----
-
-## 🌍 Architecture Overview
-
-- 🌐 Frontend (Next.js) → https://shimanto.dev  
-- ⚙️ Backend API (Express) → https://api.shimanto.dev  
-- 🛠 Admin Panel (Vite) → https://admin.shimanto.dev  
-- 🐳 Dockerized services  
-- 🔐 Nginx reverse proxy + Let's Encrypt SSL  
-- 🖥 Ubuntu VPS hosting  
+A complete step-by-step guide to deploy a full-stack project on a VPS using **Docker**, **Nginx**, **SSL (Let's Encrypt)**, and **Redis**.
 
 ---
 
-# 1️⃣ DNS Setup (Domain Provider)
-
-Add A Records:
+## 📁 Project Structure
 
 ```
-@      → YOUR_VPS_IP
-www    → YOUR_VPS_IP
-api    → YOUR_VPS_IP
-admin  → YOUR_VPS_IP
+myproject/
+├─ client/
+│  ├─ Dockerfile
+│  └─ .env.production
+├─ admin/
+│  ├─ Dockerfile
+│  └─ .env.production
+├─ server/
+│  ├─ Dockerfile
+│  └─ .env.production
+├─ nginx/
+│  └─ conf.d/          # Optional global config
+├─ redis/
+└─ docker-compose.yml
 ```
 
-After DNS propagation:
+| Service  | Internal Port | Exposed Port |
+| -------- | ------------- | ------------ |
+| Client   | 80            | 8080         |
+| Admin    | 80            | 8081         |
+| Backend  | 5000          | 5001         |
+
+---
+
+## 🛠️ Step 0: VPS Preparation
+
+### Update System
 
 ```bash
-ping shimanto.dev
-ping api.shimanto.dev
-ping admin.shimanto.dev
+sudo apt update && sudo apt upgrade -y
 ```
 
----
-
-# 2️⃣ VPS Base Setup (Ubuntu)
-
-## Update System + Firewall
+### Install Required Packages
 
 ```bash
-sudo apt update && sudo apt -y upgrade
+sudo apt install docker.io docker-compose nginx certbot python3-certbot-nginx -y
+```
 
-sudo ufw allow OpenSSH
+### Enable & Start Docker
+
+```bash
+sudo systemctl enable docker
+sudo systemctl start docker
+```
+
+### Open HTTP/HTTPS Ports
+
+```bash
 sudo ufw allow 80
 sudo ufw allow 443
-
 sudo ufw enable
-sudo ufw status
 ```
 
 ---
 
-## Install Docker + Compose Plugin
+## 📂 Step 1: Create Project Structure
 
 ```bash
-sudo apt install -y ca-certificates curl gnupg
-sudo install -m 0755 -d /etc/apt/keyrings
-
-curl -fsSL https://download.docker.com/linux/ubuntu/gpg | \
-sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
-
-sudo chmod a+r /etc/apt/keyrings/docker.gpg
-
-echo "deb [arch=$(dpkg --print-architecture) \
-signed-by=/etc/apt/keyrings/docker.gpg] \
-https://download.docker.com/linux/ubuntu \
-$(. /etc/os-release && echo $VERSION_CODENAME) stable" \
-| sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
-
-sudo apt update
-
-sudo apt install -y docker-ce docker-ce-cli \
-containerd.io docker-buildx-plugin docker-compose-plugin
-```
-
-Add deploy user to docker group:
-
-```bash
-sudo usermod -aG docker $USER
-```
-
-Logout & login again.
-
----
-
-# 3️⃣ Project Setup
-
-```bash
-sudo mkdir -p /var/www/shimanto
-sudo chown -R $USER:$USER /var/www/shimanto
-
-cd /var/www/shimanto
-git clone YOUR_REPO_URL .
+mkdir -p ~/myproject/{client,admin,server,nginx,redis}
+cd ~/myproject
 ```
 
 ---
 
-# 4️⃣ Production Folder Structure
+## 🐳 Step 2: Dockerfiles
 
+### `client/Dockerfile`
+
+```dockerfile
+FROM node:20-alpine AS build
+WORKDIR /app
+COPY package*.json ./
+RUN npm install
+COPY . .
+RUN npm run build
+
+FROM nginx:alpine
+COPY --from=build /app/build /usr/share/nginx/html
+EXPOSE 80
+CMD ["nginx", "-g", "daemon off;"]
 ```
-/var/www/shimanto
-│
-├── server/
-├── client/
-├── admin/
-├── docker-compose.prod.yml
-│
-└── infra/
-    ├── nginx/
-    │   ├── conf.d/
-    │   └── www/
-    └── letsencrypt/
+
+### `admin/Dockerfile`
+
+> Same as client. Adjust build context if needed.
+
+```dockerfile
+FROM node:20-alpine AS build
+WORKDIR /app
+COPY package*.json ./
+RUN npm install
+COPY . .
+RUN npm run build
+
+FROM nginx:alpine
+COPY --from=build /app/build /usr/share/nginx/html
+EXPOSE 80
+CMD ["nginx", "-g", "daemon off;"]
+```
+
+### `server/Dockerfile`
+
+```dockerfile
+FROM node:20-alpine
+WORKDIR /app
+COPY package*.json ./
+RUN npm install
+COPY . .
+ENV NODE_ENV=production
+EXPOSE 5000
+CMD ["node", "index.js"]
 ```
 
 ---
 
-# 5️⃣ Production Docker Compose
-
-Create `docker-compose.prod.yml`:
+## 🧩 Step 3: `docker-compose.yml`
 
 ```yaml
-services:
-  server:
-    build: ./server
-    env_file: ./server/.env.production
-    restart: unless-stopped
-    networks: [appnet]
-    dns:
-      - 1.1.1.1
-      - 8.8.8.8
+version: '3.9'
 
-  client:
-    build: ./client
-    env_file: ./client/.env.production
+services:
+  backend:
+    build: ./server
+    container_name: backend
+    ports:
+      - "127.0.0.1:5001:5000"
+    env_file:
+      - ./server/.env.production
+    depends_on:
+      - redis
     restart: unless-stopped
-    networks: [appnet]
-    depends_on: [server]
 
   admin:
     build: ./admin
-    env_file: ./admin/.env.production
-    restart: unless-stopped
-    networks: [appnet]
-    depends_on: [server]
-
-  nginx:
-    image: nginx:alpine
-    restart: unless-stopped
+    container_name: admin
     ports:
-      - "80:80"
-      - "443:443"
+      - "127.0.0.1:8081:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+  client:
+    build: ./client
+    container_name: client
+    ports:
+      - "127.0.0.1:8080:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: redis
     volumes:
-      - ./infra/nginx/conf.d:/etc/nginx/conf.d:ro
-      - ./infra/nginx/www:/var/www/certbot:ro
-      - ./infra/letsencrypt:/etc/letsencrypt:ro
-    depends_on: [client, admin, server]
-    networks: [appnet]
+      - redis_data:/data
+    restart: unless-stopped
 
-networks:
-  appnet:
-    driver: bridge
-
+volumes:
+  redis_data:
 ```
-
-⚠️ No internal service exposes ports publicly. All traffic goes through Nginx.
 
 ---
 
-# 6️⃣ Nginx HTTP Config (Before SSL)
+## 🌐 Step 4: Nginx Reverse Proxy Configs
 
-Create folders:
-
-```bash
-mkdir -p infra/nginx/conf.d
-mkdir -p infra/nginx/www
-mkdir -p infra/letsencrypt
-```
-
-Create `infra/nginx/conf.d/http.conf`:
+### Client — `/etc/nginx/sites-available/client.example.com`
 
 ```nginx
-# Main Site
 server {
-  listen 80;
-  server_name shimanto.dev www.shimanto.dev;
-
-  location /.well-known/acme-challenge/ { root /var/www/certbot; }
-
-  location / {
-    proxy_pass http://client:3000;
-    proxy_set_header Host $host;
-    proxy_set_header X-Forwarded-Proto $scheme;
-  }
+    listen 80;
+    server_name client.example.com;
+    return 301 https://$host$request_uri;
 }
 
-# API
 server {
-  listen 80;
-  server_name api.shimanto.dev;
+    listen 443 ssl;
+    server_name client.example.com;
 
-  location /.well-known/acme-challenge/ { root /var/www/certbot; }
+    ssl_certificate /etc/letsencrypt/live/client.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/client.example.com/privkey.pem;
+    include /etc/letsencrypt/options-ssl-nginx.conf;
+    ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
 
-  location / {
-    proxy_pass http://server:5000;
-    proxy_set_header Host $host;
-    proxy_set_header X-Real-IP $remote_addr;
-    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-    proxy_set_header X-Forwarded-Proto $scheme;
-  }
-}
-
-# Admin
-server {
-  listen 80;
-  server_name admin.shimanto.dev;
-
-  location /.well-known/acme-challenge/ { root /var/www/certbot; }
-
-  location / {
-    proxy_pass http://admin:80;
-    proxy_set_header Host $host;
-  }
+    location / {
+        proxy_pass http://127.0.0.1:8080;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
 }
 ```
 
+### Admin — `/etc/nginx/sites-available/admin.example.com`
+
+```nginx
+server {
+    listen 80;
+    server_name admin.example.com;
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl;
+    server_name admin.example.com;
+
+    ssl_certificate /etc/letsencrypt/live/admin.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/admin.example.com/privkey.pem;
+    include /etc/letsencrypt/options-ssl-nginx.conf;
+    ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
+
+    location / {
+        proxy_pass http://127.0.0.1:8081;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+```
+
+### Backend — `/etc/nginx/sites-available/api.example.com`
+
+```nginx
+server {
+    listen 80;
+    server_name api.example.com;
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl;
+    server_name api.example.com;
+
+    ssl_certificate /etc/letsencrypt/live/api.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/api.example.com/privkey.pem;
+    include /etc/letsencrypt/options-ssl-nginx.conf;
+    ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
+
+    location / {
+        proxy_pass http://127.0.0.1:5001;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+```
+
 ---
 
-# 7️⃣ Production Environment Variables
-
-## client/.env.production
-
-```
-NEXT_PUBLIC_API_URL=https://api.shimanto.dev
-```
-
-## admin/.env.production
-
-```
-VITE_API_URL=https://api.shimanto.dev
-```
-
-## server/.env.production
-
-Include:
-
-- Database URI
-- JWT Secret
-- Cloudinary Config
-- CORS Allowed Origins:
-
-```
-https://shimanto.dev
-https://admin.shimanto.dev
-```
-
----
-
-# 8️⃣ First Run (HTTP Stage)
+## 🔗 Step 5: Enable Sites
 
 ```bash
-docker compose -f docker-compose.prod.yml up -d --build
-docker compose -f docker-compose.prod.yml ps
+sudo ln -s /etc/nginx/sites-available/client.example.com /etc/nginx/sites-enabled/
+sudo ln -s /etc/nginx/sites-available/admin.example.com /etc/nginx/sites-enabled/
+sudo ln -s /etc/nginx/sites-available/api.example.com /etc/nginx/sites-enabled/
 ```
-
-Test:
-
-- http://shimanto.dev
-- http://api.shimanto.dev
-- http://admin.shimanto.dev
 
 ---
 
-# 9️⃣ SSL Setup (Let's Encrypt – Webroot)
-
-Run separately:
+## 🔒 Step 6: Generate SSL Certificates
 
 ```bash
-docker run --rm \
-  -v "$(pwd)/infra/letsencrypt:/etc/letsencrypt" \
-  -v "$(pwd)/infra/nginx/www:/var/www/certbot" \
-  certbot/certbot certonly \
-  --webroot -w /var/www/certbot \
-  -d shimanto.dev -d www.shimanto.dev \
-  --email your@email.com --agree-tos --no-eff-email
+sudo systemctl stop nginx
+
+sudo certbot certonly --standalone -d client.example.com
+sudo certbot certonly --standalone -d admin.example.com
+sudo certbot certonly --standalone -d api.example.com
+
+sudo systemctl start nginx
 ```
-
-Repeat for:
-
-- api.shimanto.dev  
-- admin.shimanto.dev  
 
 ---
 
-# 🔐 HTTPS Configuration
-
-Replace HTTP config with HTTPS config including:
-
-- HTTP → HTTPS redirect
-- SSL certificate paths:
-  - `/etc/letsencrypt/live/<domain>/fullchain.pem`
-  - `/etc/letsencrypt/live/<domain>/privkey.pem`
-
-Restart nginx:
+## ✅ Step 7: Test Nginx
 
 ```bash
-docker compose -f docker-compose.prod.yml restart nginx
+sudo nginx -t
+sudo systemctl reload nginx
 ```
+
+**Verify in browser:**
+
+- 🌍 [https://client.example.com](https://client.example.com)
+- 🔧 [https://admin.example.com](https://admin.example.com)
+- ⚡ [https://api.example.com](https://api.example.com)
 
 ---
 
-# 🔄 Auto Renew SSL
-
-Manual renew:
+## 🚀 Step 8: Deploy Docker Containers
 
 ```bash
-docker run --rm \
-  -v "$(pwd)/infra/letsencrypt:/etc/letsencrypt" \
-  -v "$(pwd)/infra/nginx/www:/var/www/certbot" \
-  certbot/certbot renew --webroot -w /var/www/certbot
+cd ~/myproject
+docker-compose build
+docker-compose up -d
 ```
 
-Add weekly cron:
+**Useful Docker commands:**
 
 ```bash
-crontab -e
-```
+# View running containers
+docker-compose ps
 
-Add:
+# View logs
+docker-compose logs -f
 
-```
-0 3 * * 1 cd /var/www/shimanto && docker run --rm -v "$(pwd)/infra/letsencrypt:/etc/letsencrypt" -v "$(pwd)/infra/nginx/www:/var/www/certbot" certbot/certbot renew --webroot -w /var/www/certbot && docker compose -f docker-compose.prod.yml restart nginx
+# Restart all services
+docker-compose restart
+
+# Stop all services
+docker-compose down
 ```
 
 ---
 
-# 🚀 Deployment Update Flow
+## 🔄 Step 9: Auto SSL Renewal
+
+Test renewal:
 
 ```bash
-cd /var/www/shimanto
-git pull
-docker compose -f docker-compose.prod.yml up -d --build
-docker compose -f docker-compose.prod.yml logs -f --tail=200
+sudo certbot renew --dry-run
 ```
 
----
-
-# 🛡 Security Notes
-
-- Only ports 80 & 443 exposed publicly
-- Internal services are isolated
-- SSL enforced
-- Proper CORS configuration
-- Docker network isolation
+> ✅ Certbot sets up a systemd timer automatically that renews certificates before they expire. No manual cron job needed.
 
 ---
 
-# 📦 Tech Stack
+## 📝 License
 
-- Node.js
-- Express
-- Next.js
-- MongoDB
-- Docker
-- Nginx
-- Let's Encrypt
-- Ubuntu VPS
-
----
-
-## 👨‍💻 Author
-
-Shimanto Sarkar  
-Fullstack MERN Developer  
+This guide is free to use for personal and commercial projects.
